@@ -1,47 +1,54 @@
 const express = require('express')
 const axios = require('axios')
 const cors = require('cors')
+
 const app = express()
+const QUOTES_API = process.env.QUOTES_API
 
-// Get the quotes api from the environment(refer docker-compose.yml)
-const QUOTES_API_GATEWAY = process.env.QUOTES_API
-
-// Use CORS to prevent Cross-Origin Requets issue
 app.use(cors())
 
-// Get the status of the API
+let requestsTotal = 0
+const startTime = Date.now()
+app.use((req, res, next) => {
+    requestsTotal++
+    next()
+})
+
+app.get('/health', (req, res) => {
+    res.json({ status: 'ok' })
+})
+
+app.get('/metrics', (req, res) => {
+    const uptime = (Date.now() - startTime) / 1000
+    res.type('text/plain')
+    res.send(
+        `# HELP app_requests_total Total HTTP requests received\n` +
+        `# TYPE app_requests_total counter\n` +
+        `app_requests_total ${requestsTotal}\n` +
+        `# HELP app_uptime_seconds Process uptime in seconds\n` +
+        `# TYPE app_uptime_seconds gauge\n` +
+        `app_uptime_seconds ${uptime}\n`
+    )
+})
+
 app.get('/api/status', (req, res) => {
-    return res.json({status: 'ok'})
+    res.json({ status: 'ok' })
 })
 
-// Returns a random quote from the quote api
-app.get('/api/randomquote',async (req, res) => {
+app.get('/api/randomquote', async (req, res) => {
     try {
-        const url = QUOTES_API_GATEWAY + '/api/quote'
-        const quote = await axios.get(url)
-        return res.json({
-            time: Date.now(),
-            quote: quote.data
-        })
-    } catch (error) {
-        console.log(error)
-        res.status(500)
-        return res.json({
-            message: "Internal server error",
-        })
+        const quote = await axios.get(`${QUOTES_API}/api/quote`)
+        res.json({ time: Date.now(), quote: quote.data })
+    } catch (err) {
+        console.error(err.message)
+        res.status(500).json({ message: 'Internal server error' })
     }
-    
 })
 
-// Handle any unknown route
 app.get('*', (req, res) => {
-    res.status(404)
-    return res.json({
-        message: 'Resource not found'
-    })
-});
+    res.status(404).json({ message: 'Resource not found' })
+})
 
-// starts the app
 app.listen(3000, () => {
-    console.log('API Gateway is listening on port 3000!')
+    console.log('API Gateway listening on 3000')
 })

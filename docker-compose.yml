@@ -1,23 +1,60 @@
-version: '2'
 services:
   quotes:
     build:
       context: ./QuoteService
-      dockerfile: app.dockerfile
+      dockerfile: Dockerfile
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:5000/health').status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+      start_interval: 2s
+
   api:
     build:
       context: ./ApiGateway
-      dockerfile: app.dockerfile
+      dockerfile: Dockerfile
     environment:
       - "QUOTES_API=http://quotes:5000"
     depends_on:
-      - quotes
+      quotes:
+        condition: service_healthy
     ports:
       - "3000:3000"
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- --tries=1 --timeout=3 http://localhost:3000/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+      start_interval: 2s
+
   frontend:
     build:
       context: ./FrontendApplication
-      dockerfile: app.dockerfile
+      dockerfile: Dockerfile
+      args:
+        API_GATEWAY: http://localhost:3000
+    depends_on:
+      api:
+        condition: service_healthy
     ports:
       - "8080:80"
-    
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- --tries=1 --timeout=3 http://localhost/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+      start_interval: 2s
+
+networks:
+  backend:
+    driver: bridge

@@ -1,43 +1,78 @@
-# Simple Microservice Example
+# TP1 — Stack microservices avec Docker Compose
 
-A very simple microservice example with NodeJS, Python and Docker
+Petit exemple de stack à 3 services orchestrée avec Docker Compose, en local.
 
-## Run the API gateway
+## Architecture
 
-- Install `docker` and `docker-compose` according to your operating system
+- **`quotes`** — service Python/Flask, sert des citations aléatoires (port interne `5000`, non exposé).
+- **`api`** — API Gateway Node.js/Express, expose les endpoints publics et appelle `quotes` (port `3000`).
+- **`frontend`** — page statique servie par nginx, build webpack inclus dans l'image (port `8080`).
 
-- Clone the repository and navigate to it
+Les 3 services tournent sur un réseau Docker interne (`backend`) et ont chacun un healthcheck.
 
-- Run `docker-compose up` to start the services
+## Lancer la stack
 
-- Try `GET http://YOUR_HOST:3000/api/status` to check whether application is running
+Pré-requis : Docker Desktop démarré.
 
-## Build the frontend
+```bash
+docker-compose up --build
+```
 
-The application uses a frontend written with plain html with jQuery and to style with Bulma.
-This is built with webpack. This default application is built assuming you are using the `localhost`.
+C'est tout. Pas besoin de builder le frontend à la main : le Dockerfile du frontend embarque l'étape `yarn build` (multi-stage).
 
-To build this to fit your own **IP Address** please follow the steps before you running the `docker-compose up`
+Pour arrêter :
+```bash
+docker-compose down
+```
 
-- Install NodeJs on your system
+## URLs disponibles
 
-- Go to FrontendApplication directory
+| URL | Description |
+|---|---|
+| http://localhost:8080 | Page web (clique sur *Get quote*) |
+| http://localhost:3000/api/status | Statut de l'API Gateway |
+| http://localhost:3000/api/randomquote | Récupère une citation via la chaîne complète api → quotes |
 
-- Run `npm install` or if you have yarn `yarn` to install packages
+### Endpoints d'observabilité
 
-- Now you need to set the API Gateway for this frontend application. It can be any host you have. 
-    - Let's say you are hosting this application on `http://example.com` then your `API_GATEWAY` would be this one. 
-    - If you are hosting in some machine with IP `123.324.345.1` then your `API_GATEWAY` would be your IP.
+Chaque service expose `/health` et `/metrics` (format texte Prometheus) :
 
-- To pass this setting to webpack build you need to set an Environment Variable
-    - Windows : `set API_GATEWAY=http://YOUR_HOST`
-    - Linux/Max : `API_GATEWAY=http://YOUR_HOST`
-    * Remember no / at the end of the URL to get your web app work
+| Service | Health | Metrics |
+|---|---|---|
+| API Gateway | http://localhost:3000/health | http://localhost:3000/metrics |
+| Frontend | http://localhost:8080/health | http://localhost:8080/metrics |
+| Quotes | interne (`http://quotes:5000/health`) | interne (`http://quotes:5000/metrics`) |
 
-- Now you can do `npm run build` or `yarn build`
+Le service `quotes` n'est volontairement pas exposé sur l'hôte, il n'est joignable que depuis les autres conteneurs.
 
-- Check `dist/` folder for newly created index.html and the main.js
+## Vérifier rapidement que tout est en bonne santé
 
-- Now run the `docker-compose up` on the root folder of project and check `http://YOUR_HOST:8080` to see web app 
+```bash
+docker ps
+# Les 3 conteneurs doivent être en (healthy)
+
+curl http://localhost:3000/health
+curl http://localhost:3000/api/randomquote
+curl http://localhost:8080/health
+```
+
+## Configurer l'API Gateway pour le frontend
+
+Par défaut, le frontend appelle `http://localhost:3000`. Si tu hébergeais ailleurs, il faut passer l'URL au build du frontend via l'argument `API_GATEWAY` dans `docker-compose.yml` :
+
+```yaml
+frontend:
+  build:
+    args:
+      API_GATEWAY: http://mon-host:3000
+```
+
+Puis `docker-compose up --build`.
+
+## Dépannage
+
+- **Port 8080 ou 3000 déjà pris** → `lsof -i :8080` puis tuer le process, ou changer le mapping de port dans `docker-compose.yml`.
+- **`Not Found` quand on clique sur "Get quote"** → l'URL `API_GATEWAY` n'a pas été figée dans le bundle. Rebuild avec `docker-compose up --build --force-recreate` et hard refresh du navigateur (`Cmd+Shift+R`).
+- **Healthcheck en échec** → `docker logs <nom-du-conteneur>` pour voir ce qui se passe.
 
 ![image](https://user-images.githubusercontent.com/13379595/42726706-82eb0ae6-87b6-11e8-8456-d933b9dfa73b.png)

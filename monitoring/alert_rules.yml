@@ -1,0 +1,52 @@
+groups:
+  - name: services.rules
+    rules:
+
+      - alert: HighErrorRate
+        expr: |
+          (
+            sum(rate(http_requests_total{status=~"5.."}[5m])) by (job)
+            /
+            sum(rate(http_requests_total[5m])) by (job)
+          ) > 0.05
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Taux d'erreur > 5% sur {{ $labels.job }}"
+          description: >
+            Le service {{ $labels.job }} a un taux d'erreur de {{ $value | humanizePercentage }}.
+            Vérifiez les logs avec : docker-compose logs {{ $labels.job }}
+
+      - alert: HighLatencyP99
+        expr: |
+          histogram_quantile(
+            0.99,
+            sum(rate(http_duration_seconds_bucket[5m])) by (le, job)
+          ) > 0.5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Latence p99 > 500ms sur {{ $labels.job }}"
+          description: >
+            Le service {{ $labels.job }} répond en {{ $value | humanizeDuration }} au p99.
+
+      - alert: ServiceDown
+        expr: up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Service {{ $labels.job }} injoignable"
+          description: "Prometheus ne peut pas collecter les métriques de {{ $labels.job }} depuis 1 minute."
+
+      - alert: HighMemoryUsage
+        expr: |
+          process_resident_memory_bytes > 200 * 1024 * 1024
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Utilisation mémoire élevée sur {{ $labels.job }}"
+          description: "{{ $labels.job }} utilise {{ $value | humanize }} de RAM."

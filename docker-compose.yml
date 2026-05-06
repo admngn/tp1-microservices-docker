@@ -3,16 +3,12 @@ services:
     build:
       context: ./QuoteService
       dockerfile: Dockerfile
-    networks:
-      - backend
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:5000/health').status==200 else 1)"]
-      interval: 30s
-      timeout: 5s
+      test: ["CMD-SHELL", "curl -f http://localhost:5000/health || exit 1"]
+      interval: 1m30s
+      timeout: 10s
       retries: 3
-      start_period: 10s
-      start_interval: 2s
-
+      start_period: 40s
   api:
     build:
       context: ./ApiGateway
@@ -20,41 +16,25 @@ services:
     environment:
       - "QUOTES_API=http://quotes:5000"
     depends_on:
-      quotes:
-        condition: service_healthy
+      - quotes
     ports:
       - "3000:3000"
-    networks:
-      - backend
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- --tries=1 --timeout=3 http://localhost:3000/health || exit 1"]
-      interval: 30s
-      timeout: 5s
+      test: ["CMD", "curl", "-f", "http://localhost"]
+      interval: 1m30s
+      timeout: 10s
       retries: 3
-      start_period: 10s
-      start_interval: 2s
-
+      start_period: 40s
   frontend:
     build:
       context: ./FrontendApplication
       dockerfile: Dockerfile
-      args:
-        API_GATEWAY: http://localhost:3000
-    depends_on:
-      api:
-        condition: service_healthy
     ports:
       - "8080:80"
-    networks:
-      - backend
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- --tries=1 --timeout=3 http://localhost/health || exit 1"]
-      interval: 30s
-      timeout: 5s
+      test: ["CMD", "curl", "-f", "http://localhost"]
+      interval: 1m30s
+      timeout: 10s
       retries: 3
-      start_period: 10s
-      start_interval: 2s
-
-networks:
-  backend:
-    driver: bridge
+      start_period: 40s
+      start_interval: 5s

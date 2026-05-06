@@ -1,78 +1,188 @@
-# TP1 — Stack microservices avec Docker Compose
+# TP Jour 3 — Prometheus, Grafana & Alerting
 
-Petit exemple de stack à 3 services orchestrée avec Docker Compose, en local.
+## 🎯 Objectifs
 
-## Architecture
+- Instrumenter chaque service avec **prom-client** (Node.js) ou **prometheus_client** (Python)
+- Brancher **Prometheus** pour collecter les métriques automatiquement
+- Créer un **dashboard Grafana** avec la méthode RED (Rate, Errors, Duration)
+- Configurer **2 alertes** dans Alertmanager
+- Rédiger un **SLO** avec calcul de l'error budget
 
-- **`quotes`** — service Python/Flask, sert des citations aléatoires (port interne `5000`, non exposé).
-- **`api`** — API Gateway Node.js/Express, expose les endpoints publics et appelle `quotes` (port `3000`).
-- **`frontend`** — page statique servie par nginx, build webpack inclus dans l'image (port `8080`).
+---
 
-Les 3 services tournent sur un réseau Docker interne (`backend`) et ont chacun un healthcheck.
+## 📁 Fichiers fournis
 
-## Lancer la stack
+```
+TP-Jour3/
+├── instrumentation.js          ← Middleware Prometheus pour Express (Node.js)
+├── prometheus.yml              ← Config Prometheus (à adapter à vos services)
+├── alert_rules.yml             ← 4 règles d'alerte préconfigurées
+├── alertmanager.yml            ← Config Alertmanager avec inhibition rules
+├── docker-compose.monitoring.yml ← Stack Prometheus + Grafana + Alertmanager
+└── slo.md                      ← Template SLO à compléter avec vos mesures
+```
 
-Pré-requis : Docker Desktop démarré.
+---
+
+## 🚀 Étape 1 — Instrumenter vos services
+
+### Node.js — Ajoutez prom-client
 
 ```bash
-docker-compose up --build
+# Dans chaque dossier de service
+npm install prom-client
 ```
 
-C'est tout. Pas besoin de builder le frontend à la main : le Dockerfile du frontend embarque l'étape `yarn build` (multi-stage).
+Copiez `instrumentation.js` dans chaque service, puis modifiez `index.js` :
 
-Pour arrêter :
-```bash
-docker-compose down
+```javascript
+// Au début de index.js (après les requires existants)
+const { register, trackRequest } = require('./instrumentation');
+
+// Après app = express()
+app.use(trackRequest);
+
+// Remplacez votre ancien endpoint /metrics par celui-ci :
+app.get('/metrics', async (req, res) => {
+  res.set('Content-Type', register.contentType);
+  res.end(await register.metrics());
+});
 ```
 
-## URLs disponibles
-
-| URL | Description |
-|---|---|
-| http://localhost:8080 | Page web (clique sur *Get quote*) |
-| http://localhost:3000/api/status | Statut de l'API Gateway |
-| http://localhost:3000/api/randomquote | Récupère une citation via la chaîne complète api → quotes |
-
-### Endpoints d'observabilité
-
-Chaque service expose `/health` et `/metrics` (format texte Prometheus) :
-
-| Service | Health | Metrics |
-|---|---|---|
-| API Gateway | http://localhost:3000/health | http://localhost:3000/metrics |
-| Frontend | http://localhost:8080/health | http://localhost:8080/metrics |
-| Quotes | interne (`http://quotes:5000/health`) | interne (`http://quotes:5000/metrics`) |
-
-Le service `quotes` n'est volontairement pas exposé sur l'hôte, il n'est joignable que depuis les autres conteneurs.
-
-## Vérifier rapidement que tout est en bonne santé
+### Python — Ajoutez prometheus_client
 
 ```bash
-docker ps
-# Les 3 conteneurs doivent être en (healthy)
-
-curl http://localhost:3000/health
-curl http://localhost:3000/api/randomquote
-curl http://localhost:8080/health
+pip install prometheus_client
 ```
 
-## Configurer l'API Gateway pour le frontend
+```python
+from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
+import time
 
-Par défaut, le frontend appelle `http://localhost:3000`. Si tu hébergeais ailleurs, il faut passer l'URL au build du frontend via l'argument `API_GATEWAY` dans `docker-compose.yml` :
+requests_total = Counter(
+    'http_requests_total', 'Total requests',
+    ['method', 'path', 'status']
+)
+request_duration = Histogram(
+    'http_duration_seconds', 'Request duration in seconds',
+    ['method', 'path'],
+    buckets=[.005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5]
+)
 
-```yaml
-frontend:
-  build:
-    args:
-      API_GATEWAY: http://mon-host:3000
+@app.middleware("http")
+async def track_metrics(request, call_next):
+    start = time.time()
+    response = await call_next(request)
+    duration = time.time() - start
+    requests_total.labels(request.method, request.url.path, response.status_code).inc()
+    request_duration.labels(request.method, request.url.path).observe(duration)
+    return response
+
+@app.get("/metrics")
+def metrics():
+    from fastapi.responses import Response
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 ```
 
-Puis `docker-compose up --build`.
+---
 
-## Dépannage
+## 🚀 Étape 2 — Lancer la stack de monitoring
 
-- **Port 8080 ou 3000 déjà pris** → `lsof -i :8080` puis tuer le process, ou changer le mapping de port dans `docker-compose.yml`.
-- **`Not Found` quand on clique sur "Get quote"** → l'URL `API_GATEWAY` n'a pas été figée dans le bundle. Rebuild avec `docker-compose up --build --force-recreate` et hard refresh du navigateur (`Cmd+Shift+R`).
-- **Healthcheck en échec** → `docker logs <nom-du-conteneur>` pour voir ce qui se passe.
+```bash
+# Option A : Fusionnez docker-compose.monitoring.yml dans votre docker-compose.yml
+# Option B : Utilisez l'override (recommandé)
+docker-compose -f docker-compose.yml -f docker-compose.monitoring.yml up --build
+```
 
-![image](https://user-images.githubusercontent.com/13379595/42726706-82eb0ae6-87b6-11e8-8456-d933b9dfa73b.png)
+Vérifiez que Prometheus scrape bien vos services :
+- Ouvrez http://localhost:9090/targets
+- Tous vos services doivent être en **State: UP**
+
+---
+
+## 🚀 Étape 3 — Créer le dashboard Grafana
+
+1. Ouvrez Grafana : http://localhost:3100 (admin / devops2024)
+2. **Configuration → Data Sources → Add data source → Prometheus**
+   - URL : `http://prometheus:9090`
+   - Cliquez "Save & Test"
+3. **Dashboards → New dashboard → Add visualization**
+
+### Panel 1 — Rate (requêtes/seconde)
+```promql
+sum(rate(http_requests_total[5m])) by (job)
+```
+Type : **Time series** | Titre : "Requests per second by service"
+
+### Panel 2 — Errors (% d'erreur)
+```promql
+sum(rate(http_requests_total{status=~"5.."}[5m])) by (job)
+/
+sum(rate(http_requests_total[5m])) by (job)
+* 100
+```
+Type : **Stat** | Titre : "Error rate %" | Seuils : vert 0, orange 1, rouge 5
+
+### Panel 3 — Duration (latence p99)
+```promql
+histogram_quantile(
+  0.99,
+  sum(rate(http_duration_seconds_bucket[5m])) by (le, job)
+) * 1000
+```
+Type : **Time series** | Titre : "p99 Latency (ms)" | Unité : milliseconds
+
+### Panel 4 — Requêtes en cours (bonus)
+```promql
+sum(http_requests_in_flight) by (job)
+```
+Type : **Gauge** | Titre : "Requests in flight"
+
+---
+
+## 🚀 Étape 4 — Tester les alertes
+
+### Générer des erreurs pour déclencher HighErrorRate
+
+```bash
+# Script pour générer des erreurs
+for i in $(seq 1 50); do
+  curl -s http://localhost:3000/endpoint-qui-nexiste-pas > /dev/null
+  sleep 0.1
+done
+```
+
+Puis vérifiez dans Prometheus → Alerts que `HighErrorRate` passe en **FIRING**.
+
+### Générer de la latence (bonus)
+
+```javascript
+// Ajoutez temporairement dans une route pour simuler une lenteur
+app.get('/slow', async (req, res) => {
+  await new Promise(resolve => setTimeout(resolve, 600)); // 600ms
+  res.json({ message: 'slow response' });
+});
+```
+
+---
+
+## 📋 Critères de notation
+
+| Critère | Points |
+|---------|--------|
+| Services instrumentés (Counter + Histogram via prom-client) | 4 pts |
+| Prometheus scrape tous les services (State: UP dans /targets) | 2 pts |
+| Dashboard Grafana avec 3 panels RED | 4 pts |
+| Alertes HighErrorRate + HighLatencyP99 configurées | 4 pts |
+| Fichier `slo.md` complété avec mesures réelles PromQL | 3 pts |
+| **Bonus** : alerte envoyée via Slack/webhook réel | +2 pts |
+| **Bonus** : 4ème panel (gauge en cours, mémoire…) | +1 pt |
+
+---
+
+## 📦 Livrable à 17h
+
+1. Code Git avec instrumentation dans tous les services
+2. Capture d'écran du dashboard Grafana (collez dans README)
+3. Fichier `alert_rules.yml` avec vos alertes
+4. Fichier `slo.md` complété avec vos valeurs PromQL réelles

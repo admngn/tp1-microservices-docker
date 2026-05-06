@@ -1,35 +1,22 @@
 const express = require('express')
 const axios = require('axios')
 const cors = require('cors')
+const { register, trackRequest } = require('./instrumentation');
 
 const app = express()
 const QUOTES_API = process.env.QUOTES_API
 
 app.use(cors())
-
-let requestsTotal = 0
-const startTime = Date.now()
-app.use((req, res, next) => {
-    requestsTotal++
-    next()
-})
+app.use(trackRequest);
 
 app.get('/health', (req, res) => {
     res.json({ status: 'ok' })
 })
 
-app.get('/metrics', (req, res) => {
-    const uptime = (Date.now() - startTime) / 1000
-    res.type('text/plain')
-    res.send(
-        `# HELP app_requests_total Total HTTP requests received\n` +
-        `# TYPE app_requests_total counter\n` +
-        `app_requests_total ${requestsTotal}\n` +
-        `# HELP app_uptime_seconds Process uptime in seconds\n` +
-        `# TYPE app_uptime_seconds gauge\n` +
-        `app_uptime_seconds ${uptime}\n`
-    )
-})
+app.get('/metrics', async (req, res) => {
+  res.set('Content-Type', register.contentType);
+  res.end(await register.metrics());
+});
 
 app.get('/api/status', (req, res) => {
     res.json({ status: 'ok' })
@@ -43,6 +30,15 @@ app.get('/api/randomquote', async (req, res) => {
         console.error(err.message)
         res.status(500).json({ message: 'Internal server error' })
     }
+})
+
+app.get('/slow', async (req, res) => {
+    await new Promise(resolve => setTimeout(resolve, 600))
+    res.json({ message: 'slow response' })
+})
+
+app.get('/error', (req, res) => {
+    res.status(500).json({ message: 'boom' })
 })
 
 app.get('*', (req, res) => {

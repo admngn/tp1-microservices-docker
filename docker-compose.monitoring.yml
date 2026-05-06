@@ -1,0 +1,55 @@
+# docker-compose.monitoring.yml
+#
+# Étend docker-compose.yml. Lancement :
+#   docker-compose -f docker-compose.yml -f docker-compose.monitoring.yml up --build
+#
+# Tous les services (existants + monitoring) tombent sur le réseau "default" du projet,
+# donc Prometheus peut résoudre `api:3000` et `quotes:5000` directement.
+
+services:
+
+  prometheus:
+    image: prom/prometheus:v2.47.0
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/alert_rules.yml:/etc/prometheus/alert_rules.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=15d'
+      - '--web.enable-lifecycle'
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:10.2.0
+    ports:
+      - "3100:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=devops2024
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+  alertmanager:
+    image: prom/alertmanager:v0.26.0
+    ports:
+      - "9093:9093"
+    volumes:
+      - ./monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+    restart: unless-stopped
+
+volumes:
+  prometheus-data:
+  grafana-data:
+
+# Accès aux interfaces :
+#   Prometheus   → http://localhost:9090
+#   Grafana      → http://localhost:3100  (admin / devops2024)
+#   Alertmanager → http://localhost:9093

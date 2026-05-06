@@ -103,14 +103,4 @@ Si le budget restant passe sous **10%** :
 
 ![alt text](image-2.png)
 
----
-
-## 8. Alertes configurées
-
-| Alerte | Seuil | Severity | Receiver | Testée ? |
-|--------|-------|----------|----------|---------|
-| HighErrorRate | > 5% pendant 2min | critical | webhook (console-log) | ⏳ |
-| HighLatencyP99 | > 500ms pendant 5min | warning | webhook (console-log) | ⏳ |
-| ServiceDown | up == 0 pendant 1min | critical | webhook (console-log) | ⏳ |
-| HighMemoryUsage | RSS > 200MB pendant 5min | warning | webhook (console-log) | ⏳ |
 
